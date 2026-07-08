@@ -281,20 +281,21 @@ const live: Layer.Layer<
         system.push(buildMemoryInstructions(SessionID.make(input.sessionID), projectID, yield* memory.root()))
       }
 
-      const header = system[0]
+      // Plugins still see the multi-part array (base prompt as [0], memory as a
+      // trailing element) so hooks that index or append parts keep working.
       yield* plugin.trigger(
         "experimental.chat.system.transform",
         { sessionID: input.sessionID, model: input.model },
         { system },
       )
-      // rejoin to maintain 2-part structure for caching if header unchanged
-      if (system.length > 2 && system[0] === header) {
-        const rest = system.slice(1)
-        system.length = 0
-        system.push(header, rest.join("\n"))
-      }
 
-      return system
+      // Collapse to a single system message. The historical 2-part split existed
+      // only to keep a byte-stable cache prefix separate from the memory block's
+      // per-session paths — but within a session those paths are fixed, so the
+      // whole thing is stable and one block caches just as well. One message also
+      // keeps the fork-prefix parity invariant trivial (nothing to misalign) and
+      // spares subagents/providers a stray extra system turn.
+      return system.length <= 1 ? system : [system.filter((x) => x).join("\n")]
     })
 
     const run = Effect.fn("LLM.run")(function* (input: StreamRequest) {
